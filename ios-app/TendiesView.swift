@@ -32,7 +32,7 @@ struct TendiesView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.red)
-                            Text(err)
+                            Text(verbatim: err)
                                 .font(.caption)
                                 .foregroundColor(.red)
                             Spacer()
@@ -54,7 +54,7 @@ struct TendiesView: View {
                         HStack(spacing: 8) {
                             Spacer()
                             Image(systemName: "doc.badge.plus")
-                            Text(vm.tendieItems.isEmpty ? "Choose .tendies from Files…" : "Import More Wallpapers…")
+                            Text(verbatim: L10n.tr(vm.tendieItems.isEmpty ? "Choose .tendies from Files…" : "Import More Wallpapers…"))
                             Spacer()
                         }
                         .font(.headline)
@@ -92,11 +92,13 @@ struct TendiesView: View {
                                 .font(.caption.bold())
                                 .foregroundColor(.secondary)
                             Spacer()
-                            Button(selectedAll ? "Deselect All" : "Select All") {
+                            Button {
                                 let target = !selectedAll
                                 for i in 0..<vm.tendieItems.count {
                                     vm.tendieItems[i].isSelected = target
                                 }
+                            } label: {
+                                Text(verbatim: L10n.tr(selectedAll ? "Deselect All" : "Select All"))
                             }
                             .font(.caption)
                         }
@@ -368,13 +370,13 @@ struct TendieDetailSheet: View {
         }
     }
 
-    private func detailRow(title: String, value: String) -> some View {
+    private func detailRow(title: String, value: String) -> some View { // titles/values localized via L10n
         HStack {
-            Text(title)
+            Text(verbatim: L10n.tr(title))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             Spacer()
-            Text(value)
+            Text(verbatim: L10n.tr(value))
                 .font(.subheadline.bold())
                 .foregroundColor(.primary)
                 .lineLimit(1)

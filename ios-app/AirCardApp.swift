@@ -4,6 +4,7 @@ import AirliftFFI
 @main
 struct AirCardApp: App {
     @StateObject private var vm = AppViewModel()
+    @StateObject private var lang = LanguageManager.shared
 
     init() {
         // Route Rust tracing/idevice logs into the app's vm log array.
@@ -24,6 +25,8 @@ struct AirCardApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(vm)
+                .environmentObject(lang)
+                .environment(\.locale, lang.effectiveLocale)
         }
     }
 }

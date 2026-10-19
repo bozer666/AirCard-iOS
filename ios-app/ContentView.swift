@@ -58,7 +58,7 @@ struct CryptoDonationRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: isCopied ? "checkmark" : "doc.on.doc.fill")
-                        Text(isCopied ? "Copied!" : "Copy")
+                        Text(verbatim: L10n.tr(isCopied ? "Copied!" : "Copy"))
                     }
                     .font(.caption.bold())
                     .foregroundStyle(isCopied ? .green : .blue)
@@ -702,7 +702,7 @@ struct PairingGuideSheet: View {
 // MARK: - Compact Scrollable Log View with 1-Click Copy
 
 struct CompactLogView: View {
-    let title: String
+    let title: LocalizedStringKey
     let lines: [String]
     var onClear: (() -> Void)? = nil
     @State private var copied: Bool = false
@@ -742,7 +742,7 @@ struct CompactLogView: View {
                     HStack(spacing: 4) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 11, weight: .bold))
-                        Text(copied ? "Copied" : "Copy")
+                        Text(verbatim: L10n.tr(copied ? "Copied" : "Copy"))
                             .font(.system(size: 11, weight: .bold))
                     }
                     .foregroundStyle(copied ? .green : .blue)
@@ -759,7 +759,7 @@ struct CompactLogView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
-                            Text(line)
+                            Text(verbatim: line)
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundStyle(logLineColor(line))
                                 .textSelection(.enabled)
@@ -861,12 +861,12 @@ struct ContentView: View {
         )) {
             Button("OK") { vm.errorMessage = nil }
         } message: {
-            Text(vm.errorMessage ?? "")
+            Text(verbatim: vm.errorMessage ?? "")
         }
         .alert("Success! 🎉", isPresented: $vm.showSuccessAlert) {
             Button("OK") {}
         } message: {
-            Text(vm.successAlertMessage)
+            Text(verbatim: vm.successAlertMessage)
         }
         .sheet(isPresented: $vm.showShareSheet) {
             if let url = vm.exportedThemeURL {
@@ -890,8 +890,23 @@ struct ContentView: View {
 
 // MARK: - Pairing Tab
 
+/// In-app language choices shown in the Pairing tab navigation bar.
+private struct LanguageOption: Hashable {
+    /// "system" | "en" | "zh-Hans"
+    let code: String
+    /// Localizable display name ("中文" stays as-is in every language).
+    let name: String
+}
+
+private let languageOptions: [LanguageOption] = [
+    LanguageOption(code: LanguageManager.systemCode, name: "Follow System"),
+    LanguageOption(code: LanguageManager.englishCode, name: "English"),
+    LanguageOption(code: LanguageManager.chineseCode, name: "中文"),
+]
+
 struct PairingTab: View {
     @EnvironmentObject var vm: AppViewModel
+    @EnvironmentObject var lang: LanguageManager
     @State private var showDeleteConfirm = false
     @State private var showCredits = false
     @State private var showFilePicker = false
@@ -968,9 +983,9 @@ struct PairingTab: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Not Paired")
                                     .font(.subheadline.bold())
-                                Text(isIOS27OrNewer
+                                Text(verbatim: L10n.tr(isIOS27OrNewer
                                      ? "Pair on this iPhone below or import a pairing file."
-                                     : "Import a pairing file from SideStore, iLoader, or PC below.")
+                                     : "Import a pairing file from SideStore, iLoader, or PC below."))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -1083,7 +1098,7 @@ struct PairingTab: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack(spacing: 8) {
                                     ProgressView().scaleEffect(0.85)
-                                    Text(vm.pairingStatus.isEmpty ? "Starting local pairing host…" : vm.pairingStatus)
+                                    Text(verbatim: vm.pairingStatus.isEmpty ? L10n.tr("Starting local pairing host…") : vm.pairingStatus)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
@@ -1149,12 +1164,12 @@ struct PairingTab: View {
                             }
                         } else {
                             VStack(spacing: 12) {
-                                if !vm.pairingStatus.isEmpty && vm.pairingStatus != "idle" {
-                                    Text(vm.pairingStatus)
+                                if !vm.pairingStatus.isEmpty && vm.pairingStatus != L10n.tr("idle") {
+                                    Text(verbatim: vm.pairingStatus)
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(
                                             vm.pairingStatus.contains("✅") ? .green :
-                                            vm.pairingStatus.contains("❌") || vm.pairingStatus.contains("failed") ? .red :
+                                            vm.pairingStatus.contains("❌") || vm.pairingStatus.contains("failed") || vm.pairingStatus.contains("失败") ? .red :
                                             .secondary
                                         )
                                         .multilineTextAlignment(.center)
@@ -1168,7 +1183,7 @@ struct PairingTab: View {
                                         Spacer()
                                         Image(systemName: "antenna.radiowaves.left.and.right")
                                             .font(.body.weight(.semibold))
-                                        Text(vm.hasPairingFile ? "Re-Pair This iPhone" : "Pair This iPhone")
+                                        Text(verbatim: L10n.tr(vm.hasPairingFile ? "Re-Pair This iPhone" : "Pair This iPhone"))
                                             .font(.headline)
                                         Spacer()
                                     }
@@ -1198,6 +1213,34 @@ struct PairingTab: View {
             .navigationTitle("AirCard-iOS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Menu {
+                        ForEach(languageOptions, id: \.code) { opt in
+                            Button {
+                                lang.selection = opt.code
+                            } label: {
+                                HStack {
+                                    Text(verbatim: L10n.tr(opt.name))
+                                    if lang.selection == opt.code {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "globe")
+                                .font(.caption)
+                            Text(verbatim: lang.isChinese ? "中文" : "EN")
+                                .font(.caption.bold())
+                        }
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.blue.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showCredits = true
@@ -1264,11 +1307,11 @@ struct VPNStatusRow: View {
                     .font(.title3)
                     .foregroundStyle(vm.vpnUp ? .green : .orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(vm.vpnUp ? "Loopback VPN Active" : "Loopback VPN Not Detected")
+                    Text(verbatim: L10n.tr(vm.vpnUp ? "Loopback VPN Active" : "Loopback VPN Not Detected"))
                         .font(.subheadline.bold())
-                    Text(vm.vpnUp
+                    Text(verbatim: L10n.tr(vm.vpnUp
                          ? "RSD tunnel ready — exploit will connect."
-                         : "Connect LocalDevVPN before running flashes.")
+                         : "Connect LocalDevVPN before running flashes."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1282,7 +1325,7 @@ struct VPNStatusRow: View {
                         "1. Open LocalDevVPN app and tap Connect.",
                         "2. Return to AirCard-iOS — status indicator turns green."
                     ], id: \.self) { step in
-                        Text(step)
+                        Text(verbatim: L10n.tr(step))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1450,7 +1493,7 @@ struct WalletCardView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(card.title)
+                        Text(verbatim: card.title)
                             .font(.system(size: 13, weight: .bold))
                             .lineLimit(1)
 
@@ -1598,7 +1641,7 @@ struct WalletCardsTab: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: vm.isScanningCards ? "stop.circle.fill" : "wave.3.left.circle")
-                            Text(vm.isScanningCards ? "Stop Scan" : "Scan Cards")
+                            Text(verbatim: L10n.tr(vm.isScanningCards ? "Stop Scan" : "Scan Cards"))
                         }
                         .font(.subheadline.bold())
                         .foregroundStyle(vm.isScanningCards ? .red : .blue)
@@ -1777,9 +1820,9 @@ struct WalletCardsTab: View {
                         .controlSize(.small)
                     }
                 }
-                Text(vm.scanStatusText)
+                Text(verbatim: vm.scanStatusText)
                     .font(.caption)
-                    .foregroundStyle(vm.scanStatusText.contains("stopped") || vm.scanStatusText.contains("error") ? .orange : .secondary)
+                    .foregroundStyle(vm.scanStatusText.contains("stopped") || vm.scanStatusText.contains("error") || vm.scanStatusText.contains("停止") || vm.scanStatusText.contains("出错") ? .orange : .secondary)
             }
             .padding(14)
             .background(vm.isScanningCards ? Color.blue.opacity(0.12) : Color(uiColor: .secondarySystemBackground))
@@ -1913,7 +1956,7 @@ struct WalletCardsTab: View {
                     HStack(spacing: 6) {
                         Spacer()
                         Image(systemName: vm.isScanningCards ? "stop.circle.fill" : "wave.3.left.circle")
-                        Text(vm.isScanningCards ? "Stop Scan" : "Scan Cards")
+                        Text(verbatim: L10n.tr(vm.isScanningCards ? "Stop Scan" : "Scan Cards"))
                         Spacer()
                     }
                     .font(.headline)
@@ -2000,7 +2043,7 @@ struct PasscodeThemeTab: View {
                 Section {
                     Picker("Mode", selection: $vm.passcodeMode) {
                         ForEach(CreatorMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
+                            Text(verbatim: L10n.tr(mode.rawValue)).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -2240,7 +2283,7 @@ struct PasscodeTargetSection: View {
                         .foregroundColor(.secondary)
                     Picker("System Language", selection: $vm.passcodeLanguageTarget) {
                         ForEach(PasscodeLanguageTarget.allCases) { item in
-                            Text(item.rawValue).tag(item)
+                            Text(verbatim: L10n.tr(item.rawValue)).tag(item)
                         }
                     }
                     .pickerStyle(.menu)
@@ -2256,7 +2299,7 @@ struct PasscodeTargetSection: View {
                         .foregroundColor(.secondary)
                     Picker("Font Weight / Style", selection: $vm.passcodeBoldTarget) {
                         ForEach(PasscodeBoldTarget.allCases) { item in
-                            Text(item.rawValue).tag(item)
+                            Text(verbatim: L10n.tr(item.rawValue)).tag(item)
                         }
                     }
                     .pickerStyle(.menu)
@@ -2307,7 +2350,7 @@ struct ThemeCreatorSection: View {
         Section("Slice Mode") {
             Picker("", selection: $vm.sliceMode) {
                 ForEach(SliceMode.allCases) { m in
-                    Text(m.rawValue).tag(m)
+                    Text(verbatim: L10n.tr(m.rawValue)).tag(m)
                 }
             }
             .pickerStyle(.segmented)
@@ -2434,7 +2477,7 @@ struct ThemeCreatorSection: View {
                             vm.updatePosterSlicing()
                         }
 
-                        Text(vm.maskToCircles ? "Artwork is clipped into individual circular button icons." : "Seamless artwork spans across dialer keys without circular cuts (Adobe Dog style).")
+                        Text(verbatim: L10n.tr(vm.maskToCircles ? "Artwork is clipped into individual circular button icons." : "Seamless artwork spans across dialer keys without circular cuts (Adobe Dog style)."))
                             .font(.caption2)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

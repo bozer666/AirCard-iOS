@@ -1,0 +1,3 @@
+"NSLocalNetworkUsageDescription" = "AirCard-iOS 会广播设备端配对服务以便此 iPhone 与自身配对，并连接本地 lockdown 守护进程来运行漏洞利用。";
+"NSPhotoLibraryUsageDescription" = "AirCard-iOS 需要照片访问权限才能应用自定义卡片皮肤与密码主题。";
+"CFBundleDisplayName" = "AirCard-iOS";

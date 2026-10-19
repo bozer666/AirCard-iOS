@@ -18,7 +18,7 @@ final class PairingController: ObservableObject {
     private let keepAlive = KeepAlive()
 
     @Published private(set) var running = false
-    @Published var pairingStatus: String = "idle"
+    @Published var pairingStatus: String = L10n.tr("idle")
     @Published var pairingPIN: String? = nil
 
     /// Path to the pairing file that was actively found or created.
@@ -44,9 +44,9 @@ final class PairingController: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .busy: return "Pairing is already in progress."
-            case .localNetworkDenied: return "Local Network permission is off. Enable it in Settings › AirCard-iOS › Local Network."
-            case .zeroBytes: return "Pairing produced an empty file. Approve the pairing request, then try again."
+            case .busy: return L10n.tr("Pairing is already in progress.")
+            case .localNetworkDenied: return L10n.tr("Local Network permission is off. Enable it in Settings › AirCard-iOS › Local Network.")
+            case .zeroBytes: return L10n.tr("Pairing produced an empty file. Approve the pairing request, then try again.")
             case let .failed(msg): return msg
             }
         }
@@ -136,7 +136,7 @@ final class PairingController: ObservableObject {
         keepAlive.stopAll()
         running = false
         pairingPIN = nil
-        pairingStatus = "Cancelled"
+        pairingStatus = L10n.tr("Cancelled")
         resolve(.failure(CancellationError()))
     }
 
@@ -151,14 +151,14 @@ final class PairingController: ObservableObject {
         keepAlive.stopAll()
         running = true
         pairingPIN = nil
-        pairingStatus = "Starting local host…"
+        pairingStatus = L10n.tr("Starting local host…")
 
         Task {
             _ = await localNetwork.request()
             guard running else { return }
 
             keepAlive.startAudio()
-            pairingStatus = "Broadcasting… open Settings to pair"
+            pairingStatus = L10n.tr("Broadcasting… open Settings to pair")
             runHost()
         }
     }
@@ -233,14 +233,14 @@ final class PairingController: ObservableObject {
             let canonical = Self.syncCanonicalPairingFile(from: path)
             let size = (try? FileManager.default.attributesOfItem(atPath: canonical)[.size] as? Int) ?? 0
             if size == 0 {
-                pairingStatus = "Failed: empty pairing file"
+                pairingStatus = L10n.tr("Failed: empty pairing file")
                 resolve(.failure(PairingError.zeroBytes))
             } else {
-                pairingStatus = "Paired: \(name) (\(size)B)"
+                pairingStatus = L10n.tr("Paired: %@ (%lldB)", name, size)
                 resolve(.success(canonical))
             }
         case let .failure(message):
-            pairingStatus = "Failed: \(message)"
+            pairingStatus = L10n.tr("Failed: %@", message)
             resolve(.failure(PairingError.failed(message)))
         }
     }
@@ -259,12 +259,12 @@ final class PairingController: ObservableObject {
         service.setTXTRecord(NetService.data(fromTXTRecord: txt))
         service.publish()
         netService = service
-        pairingStatus = "Advertising — open Settings › Privacy & Security › Developer Mode"
+        pairingStatus = L10n.tr("Advertising — open Settings › Privacy & Security › Developer Mode")
     }
 
     fileprivate func presentPin(_ pin: String) {
         pairingPIN = pin
-        pairingStatus = "Enter PIN \(pin) in Settings › Privacy & Security › Developer Mode › Pair with AirCard-iOS"
+        pairingStatus = L10n.tr("Enter PIN %@ in Settings › Privacy & Security › Developer Mode › Pair with AirCard-iOS", pin)
     }
 
     private func stopAdvertising() {
