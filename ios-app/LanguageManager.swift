@@ -22,7 +22,7 @@ final class LanguageManager: ObservableObject {
     /// @AppStorage inside an ObservableObject doesn't reliably emit
     /// objectWillChange, so the UI would only pick up the new language
     /// after a restart.
-    @Published var selection: String = UserDefaults.standard.string(forKey: Self.selectionKey) ?? Self.systemCode {
+    @Published var selection: String = UserDefaults.standard.string(forKey: LanguageManager.selectionKey) ?? LanguageManager.systemCode {
         didSet {
             UserDefaults.standard.set(selection, forKey: Self.selectionKey)
         }
