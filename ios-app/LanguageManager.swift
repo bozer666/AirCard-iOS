@@ -15,9 +15,18 @@ final class LanguageManager: ObservableObject {
     static let systemCode = "system"
     static let englishCode = "en"
     static let chineseCode = "zh-Hans"
+    static let selectionKey = "aircard.language"
 
-    /// "system" | "en" | "zh-Hans"
-    @AppStorage("aircard.language") var selection: String = systemCode
+    /// "system" | "en" | "zh-Hans".
+    /// NOTE: @Published + manual UserDefaults sync, NOT @AppStorage —
+    /// @AppStorage inside an ObservableObject doesn't reliably emit
+    /// objectWillChange, so the UI would only pick up the new language
+    /// after a restart.
+    @Published var selection: String = UserDefaults.standard.string(forKey: Self.selectionKey) ?? Self.systemCode {
+        didSet {
+            UserDefaults.standard.set(selection, forKey: Self.selectionKey)
+        }
+    }
 
     /// Effective lookup code: "en" or "zh-Hans".
     var effectiveCode: String {
