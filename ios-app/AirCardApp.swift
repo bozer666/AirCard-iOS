@@ -27,6 +27,11 @@ struct AirCardApp: App {
                 .environmentObject(vm)
                 .environmentObject(lang)
                 .environment(\.locale, lang.effectiveLocale)
+                // Force a full view-tree rebuild on language change: this
+                // guarantees every Text re-resolves its LocalizedStringKey
+                // and every L10n.tr call re-evaluates, including inactive
+                // TabView tabs. (State in vm/lang above is preserved.)
+                .id("root-\(lang.effectiveCode)")
         }
     }
 }
