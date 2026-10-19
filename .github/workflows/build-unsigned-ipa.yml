@@ -12,10 +12,24 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Liquid Glass is applied based on the build SDK: must compile with the
+    # iOS 26 SDK (Xcode 26+) or system UI renders in the legacy style.
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_APP" ]; then echo "No Xcode 26+ found on runner"; exit 1; fi
+          echo "Using $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          SDK_VER=$(xcrun --sdk iphoneos --show-sdk-version)
+          echo "iOS SDK: $SDK_VER"
+          case "$SDK_VER" in 26.*|27.*) ;; *) echo "Unexpected SDK version: $SDK_VER"; exit 1;; esac
 
       - name: Install xcodegen
         run: brew install xcodegen
