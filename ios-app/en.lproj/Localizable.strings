@@ -307,3 +307,10 @@
 "🎉 %lld/%lld card(s) flashed! Force-close Wallet app to see changes." = "🎉 %lld/%lld card(s) flashed! Force-close Wallet app to see changes.";
 "🎉 Passcode theme applied! Lock your iPhone to see it." = "🎉 Passcode theme applied! Lock your iPhone to see it.";
 "🎉 Wallpapers applied successfully!" = "🎉 Wallpapers applied successfully!";
+"Fetch Current Face" = "Fetch Current Face";
+"Current Face" = "Current Face";
+"Fetching current face for card %@…" = "Fetching current face for card %@…";
+"✅ Current face fetched for card %@" = "✅ Current face fetched for card %@";
+"❌ Face fetch failed: %@" = "❌ Face fetch failed: %@";
+"Card face fetch error: %@" = "Card face fetch error: %@";
+"⚠️ No face image found on device for card %@" = "⚠️ No face image found on device for card %@";

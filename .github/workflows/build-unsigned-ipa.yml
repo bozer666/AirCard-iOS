@@ -2,9 +2,11 @@ name: Build unsigned IPA
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/card-face-preview]
     paths:
       - 'ios-app/**'
+      - 'rust-core/**'
+      - 'build-ios.sh'
       - 'project.yml'
       - 'AirCard-iOS.xcodeproj/**'
       - '.github/workflows/build-unsigned-ipa.yml'
@@ -26,10 +28,19 @@ jobs:
           if [ -z "$XCODE_APP" ]; then echo "No Xcode 26+ found on runner"; exit 1; fi
           echo "Using $XCODE_APP"
           sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
           xcodebuild -version
           SDK_VER=$(xcrun --sdk iphoneos --show-sdk-version)
           echo "iOS SDK: $SDK_VER"
           case "$SDK_VER" in 26.*|27.*) ;; *) echo "Unexpected SDK version: $SDK_VER"; exit 1;; esac
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build Rust core (AirliftFFI.xcframework)
+        run: ./build-ios.sh
 
       - name: Install xcodegen
         run: brew install xcodegen

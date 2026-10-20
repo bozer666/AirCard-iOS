@@ -140,6 +140,39 @@ pub unsafe extern "C" fn al_exploit_write_dir(
     }
 }
 
+/// Read files from `remote_dir` on the device into `local_dir` (pure read:
+/// stages nothing on the device). `leaves` is a newline-separated list of
+/// flat file names to fetch from `remote_dir`.
+/// On success `out_json` receives `{"recovered": [...], "missing": [...],
+/// "remoteDir": "..."}`.
+///
+/// # Safety
+/// All pointer arguments must be null or valid for their documented use.
+#[no_mangle]
+pub unsafe extern "C" fn al_exploit_read_files(
+    pairing_path: *const c_char,
+    remote_dir: *const c_char,
+    leaves: *const c_char,
+    local_dir: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_json: *mut *mut c_char,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        exploit::read_files(pairing_path, remote_dir, leaves, local_dir, log_cb, ctx, out_json, out_error)
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_exploit_read_files: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
 /// Inject an entire directory `folder_path` into `target_parent_dir/dest_name` outside the sandbox via AirTraffic exploit.
 ///
 /// # Safety

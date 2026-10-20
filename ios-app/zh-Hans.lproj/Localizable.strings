@@ -307,3 +307,10 @@
 "🎉 %lld/%lld card(s) flashed! Force-close Wallet app to see changes." = "🎉 %lld/%lld 张卡片刷入完成！请强制关闭钱包 App 以查看变化。";
 "🎉 Passcode theme applied! Lock your iPhone to see it." = "🎉 密码主题已应用！锁定 iPhone 查看效果。";
 "🎉 Wallpapers applied successfully!" = "🎉 壁纸应用成功！";
+"Fetch Current Face" = "获取当前卡面";
+"Current Face" = "当前卡面";
+"Fetching current face for card %@…" = "正在获取卡片 %@ 的当前卡面…";
+"✅ Current face fetched for card %@" = "✅ 已获取卡片 %@ 的当前卡面";
+"❌ Face fetch failed: %@" = "❌ 获取卡面失败：%@";
+"Card face fetch error: %@" = "卡面获取失败：%@";
+"⚠️ No face image found on device for card %@" = "⚠️ 设备上未找到卡片 %@ 的卡面图片";

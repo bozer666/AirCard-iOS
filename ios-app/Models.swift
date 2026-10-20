@@ -14,6 +14,8 @@ struct CardItem: Identifiable, Equatable {
     var isVerified: Bool = true
     var customImageData: Data? = nil  // Primary PNG data (1536x969)
     var customImage: UIImage? = nil   // Fast cached UIImage for display
+    var currentImageData: Data? = nil // Current on-device face fetched via al_exploit_read_files
+    var currentImage: UIImage? = nil  // Fast cached UIImage for display
 
     init(
         id: String,
@@ -22,7 +24,9 @@ struct CardItem: Identifiable, Equatable {
         isSelected: Bool = true,
         isVerified: Bool = true,
         customImageData: Data? = nil,
-        customImage: UIImage? = nil
+        customImage: UIImage? = nil,
+        currentImageData: Data? = nil,
+        currentImage: UIImage? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -31,10 +35,23 @@ struct CardItem: Identifiable, Equatable {
         self.isVerified = isVerified
         self.customImageData = customImageData
         self.customImage = customImage
+        self.currentImageData = currentImageData
+        self.currentImage = currentImage
     }
 
     var uiImage: UIImage? {
         customImage ?? (customImageData.flatMap { UIImage(data: $0) })
+    }
+
+    /// The card face currently on the device (fetched after scan), if any.
+    var currentFaceImage: UIImage? {
+        currentImage ?? (currentImageData.flatMap { UIImage(data: $0) })
+    }
+
+    /// What to show in the card mockup: the user's chosen skin, else the
+    /// fetched current face, else the empty placeholder.
+    var displayFaceImage: UIImage? {
+        uiImage ?? currentFaceImage
     }
 
     var title: String {
@@ -77,7 +94,9 @@ struct CardItem: Identifiable, Equatable {
         lhs.paymentNetwork == rhs.paymentNetwork &&
         lhs.isVerified == rhs.isVerified &&
         lhs.customImage === rhs.customImage &&
-        (lhs.customImageData?.count == rhs.customImageData?.count)
+        (lhs.customImageData?.count == rhs.customImageData?.count) &&
+        lhs.currentImage === rhs.currentImage &&
+        (lhs.currentImageData?.count == rhs.currentImageData?.count)
     }
 }
 

@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import SwiftUI
 import AirliftFFI
+import PDFKit
 
 // MARK: - AppViewModel
 
@@ -42,6 +43,8 @@ final class AppViewModel: ObservableObject {
     @Published var cardFlashPhase: FlashPhase = .idle
     @Published var cardFlashProgress: Double = 0
     @Published var cardFlashLog: [String] = []
+    /// Card ids whose current on-device face is being fetched right now.
+    @Published var fetchingFaceIds: Set<String> = []
 
     enum FlashPhase: Equatable {
         case idle, running, done(ok: Bool)
@@ -574,6 +577,17 @@ final class AppViewModel: ObservableObject {
         return cardsDir.appendingPathComponent("card_\(safeId).png")
     }
 
+    /// Where the fetched current on-device card face is cached on disk.
+    nonisolated static func cardCurrentImagePath(for cardId: String) -> URL {
+        let safeId = cardId.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+        let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let cardsDir = docDir.appendingPathComponent("WalletCards", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: cardsDir.path) {
+            try? FileManager.default.createDirectory(at: cardsDir, withIntermediateDirectories: true)
+        }
+        return cardsDir.appendingPathComponent("card_\(safeId)_current.png")
+    }
+
     func loadSavedCards() {
         var foundHashes: [String] = []
         for key in storageKeys {
@@ -596,6 +610,9 @@ final class AppViewModel: ObservableObject {
             let data = try? Data(contentsOf: path)
             // Downsampled thumbnail keeps RAM minimal, preventing Jetsam OOM kills
             let img = data.flatMap { ImageEngine.safeImageFromData($0, maxDimension: 512) }
+            let currentPath = Self.cardCurrentImagePath(for: id)
+            let currentData = try? Data(contentsOf: currentPath)
+            let currentImg = currentData.flatMap { ImageEngine.safeImageFromData($0, maxDimension: 512) }
             return CardItem(
                 id: id,
                 displayName: displayNames[id],
@@ -603,7 +620,9 @@ final class AppViewModel: ObservableObject {
                 isSelected: true,
                 isVerified: true,
                 customImageData: data,
-                customImage: img
+                customImage: img,
+                currentImageData: currentData,
+                currentImage: currentImg
             )
         }
     }
@@ -612,6 +631,8 @@ final class AppViewModel: ObservableObject {
         for card in cards {
             let path = Self.cardImagePath(for: card.id)
             try? FileManager.default.removeItem(at: path)
+            let currentPath = Self.cardCurrentImagePath(for: card.id)
+            try? FileManager.default.removeItem(at: currentPath)
         }
         cards.removeAll()
         saveCards()
@@ -861,6 +882,9 @@ final class AppViewModel: ObservableObject {
                     self.cardFlashLog.append(L10n.tr("  ✅ Pass cache invalidated"))
                     self.cardFlashProgress = Double(i + 1) / total
                 }
+
+                // The on-device face just changed — drop the stale fetched face.
+                await MainActor.run { self.clearCurrentFace(for: card.id) }
             }
 
             await MainActor.run {
@@ -876,6 +900,134 @@ final class AppViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - Current Card Face Fetch
+
+    /// Candidate face files inside a .pkpass, in display-priority order.
+    /// `pass.json` rides along as a probe (always present) and a name source.
+    private static let cardFaceLeaves: [String] = [
+        "cardBackgroundCombined@3x.png",
+        "cardBackgroundCombined@2x.png",
+        "cardBackgroundCombined.pdf",
+        "background@3x.png",
+        "background@2x.png",
+        "background.pdf",
+        "strip@3x.png",
+        "strip@2x.png",
+        "strip.pdf",
+        "pass.json"
+    ]
+
+    func clearCurrentFace(for cardId: String) {
+        guard let idx = cards.firstIndex(where: { $0.id == cardId }) else { return }
+        cards[idx].currentImageData = nil
+        cards[idx].currentImage = nil
+        try? FileManager.default.removeItem(at: Self.cardCurrentImagePath(for: cardId))
+    }
+
+    /// Fetch the card's CURRENT face from the paired device and display it.
+    /// Uses the pure-read AirTraffic channel (`al_exploit_read_files`):
+    /// nothing is staged or written on the device.
+    func fetchCurrentCardFace(for cardId: String) {
+        guard !fetchingFaceIds.contains(cardId) else { return }
+        let cleanId = CardItem.cleanCardId(cardId) ?? cardId
+        guard hasPairingFile else {
+            errorMessage = L10n.tr("Pairing file is required before scanning. Pair this iPhone or select a .plist first.")
+            return
+        }
+        syncTargetHostsToRust()
+        fetchingFaceIds.insert(cardId)
+
+        if !vpnUp {
+            cardFlashLog.append(L10n.tr("⚠️ Notice: Loopback VPN (LocalDevVPN or SideStore WireGuard) is strongly recommended for on-device operations."))
+        }
+        cardFlashLog.append(L10n.tr("Fetching current face for card %@…", String(cleanId.prefix(12))))
+
+        let pairingPath = PairingController.pairingFilePath()
+        let remoteDir = "/var/mobile/Library/Passes/Cards/\(cleanId).pkpass"
+        let leavesJoined = Self.cardFaceLeaves.joined(separator: "\n")
+        let localDirURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("airlift_face_\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: localDirURL, withIntermediateDirectories: true)
+
+        Task.detached { [weak self] in
+            var outJson: UnsafeMutablePointer<CChar>? = nil
+            var outError: UnsafeMutablePointer<CChar>? = nil
+            let rc = pairingPath.withCString { pairC in
+                remoteDir.withCString { dirC in
+                    leavesJoined.withCString { leavesC in
+                        localDirURL.path.withCString { localC in
+                            al_exploit_read_files(pairC, dirC, leavesC, localC, { _, msg in
+                                guard let msg = msg else { return }
+                                let line = String(cString: msg)
+                                DispatchQueue.main.async { AppViewModel.shared?.cardFlashLog.append("    " + line) }
+                            }, nil, &outJson, &outError)
+                        }
+                    }
+                }
+            }
+            let jsonStr = outJson.flatMap { String(validatingUTF8: $0) }
+            if let p = outJson { al_string_free(p) }
+            let errStr = outError.flatMap { String(validatingUTF8: $0) }
+            if let p = outError { al_string_free(p) }
+
+            // Pick the best recovered face file (priority order).
+            var facePNG: Data? = nil
+            var passName: String? = nil
+            if rc == 0, let jsonStr = jsonStr,
+               let jsonData = jsonStr.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let recovered = obj["recovered"] as? [String] {
+                let recoveredSet = Set(recovered)
+                for leaf in AppViewModel.cardFaceLeaves where recoveredSet.contains(leaf) {
+                    let fileURL = localDirURL.appendingPathComponent(leaf)
+                    guard let data = try? Data(contentsOf: fileURL) else { continue }
+                    if leaf == "pass.json" {
+                        if let pass = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            passName = (pass["organizationName"] as? String) ?? (pass["description"] as? String)
+                        }
+                        continue
+                    }
+                    if facePNG == nil {
+                        if leaf.hasSuffix(".pdf") {
+                            facePNG = AppViewModel.renderPDFFace(data: data)?.pngData()
+                        } else {
+                            facePNG = data
+                        }
+                    }
+                }
+            }
+            try? FileManager.default.removeItem(at: localDirURL)
+
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.fetchingFaceIds.remove(cardId)
+                guard let idx = self.cards.firstIndex(where: { $0.id == cardId }) else { return }
+                if let png = facePNG, let img = UIImage(data: png) {
+                    self.cards[idx].currentImageData = png
+                    self.cards[idx].currentImage = ImageEngine.safeImageFromData(png, maxDimension: 768) ?? img
+                    try? png.write(to: AppViewModel.cardCurrentImagePath(for: cardId))
+                    self.cardFlashLog.append(L10n.tr("✅ Current face fetched for card %@", String(cleanId.prefix(12))))
+                } else if rc != 0 {
+                    self.cardFlashLog.append(L10n.tr("❌ Face fetch failed: %@", errStr ?? "exploit error"))
+                    self.errorMessage = L10n.tr("Card face fetch error: %@", errStr ?? "exploit error")
+                } else {
+                    self.cardFlashLog.append(L10n.tr("⚠️ No face image found on device for card %@", String(cleanId.prefix(12))))
+                }
+                if let passName = passName, !passName.isEmpty,
+                   (self.cards[idx].displayName ?? "").isEmpty {
+                    self.cards[idx].displayName = passName
+                    self.saveCards()
+                }
+            }
+        }
+    }
+
+    /// Render the first page of a pass PDF (transit cards) into an image.
+    nonisolated static func renderPDFFace(data: Data) -> UIImage? {
+        guard let doc = PDFDocument(data: data), let page = doc.page(at: 0) else { return nil }
+        return page.thumbnail(of: CGSize(width: 1536, height: 969), for: .cropBox)
     }
 
     // MARK: - Poster Slice

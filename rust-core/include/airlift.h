@@ -98,6 +98,21 @@ int32_t al_exploit_write_dir(const char *pairing_path,
                              void *ctx,
                              char **out_error);
 
+// Read files from `remote_dir` on the device into `local_dir` (pure read:
+// stages nothing on the device). `leaves` is a newline-separated list of
+// flat file names to fetch from `remote_dir`.
+// On success `out_json` receives {"recovered": [...], "missing": [...],
+// "remoteDir": "..."}; free with al_string_free().
+// Returns 0 on success, 1 on error (with out_error set).
+int32_t al_exploit_read_files(const char *pairing_path,
+                              const char *remote_dir,
+                              const char *leaves,
+                              const char *local_dir,
+                              ALLogCallback log_cb,
+                              void *ctx,
+                              char **out_json,
+                              char **out_error);
+
 // Inject an entire directory `folder_path` into `target_parent_dir/dest_name` on the device.
 // Preserves complete folder hierarchy and all internal assets in one AirTraffic operation.
 // Returns 0 on success, 1 on error (with out_error set).

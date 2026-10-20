@@ -1383,6 +1383,8 @@ struct WalletCardView: View {
     let onClearImage: () -> Void
     let onDelete: () -> Void
     var onRename: ((String) -> Void)? = nil
+    var onFetchFace: (() -> Void)? = nil
+    var isFetchingFace: Bool = false
 
     @State private var copied = false
     @State private var isRenaming = false
@@ -1396,8 +1398,8 @@ struct WalletCardView: View {
                 let height = width / 1.586
 
                 ZStack {
-                    if let img = card.uiImage {
-                        // Custom skin applied
+                    if let img = card.displayFaceImage {
+                        // Custom skin, or the card's current on-device face
                         ZStack(alignment: .topTrailing) {
                             Image(uiImage: img)
                                 .resizable()
@@ -1413,15 +1415,27 @@ struct WalletCardView: View {
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                            // Top Right Remove Button
-                            Button(action: onClearImage) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 24))
-                                    .foregroundStyle(.white.opacity(0.95))
-                                    .background(Circle().fill(Color.black.opacity(0.55)))
+                            if card.uiImage != nil {
+                                // Top Right Remove Button (custom skin only)
+                                Button(action: onClearImage) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 24))
+                                        .foregroundStyle(.white.opacity(0.95))
+                                        .background(Circle().fill(Color.black.opacity(0.55)))
+                                }
+                                .buttonStyle(.plain)
+                                .padding(10)
+                            } else {
+                                // Badge: this is the live face read from the device
+                                Text(verbatim: L10n.tr("Current Face"))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Color.black.opacity(0.55))
+                                    .foregroundStyle(.white)
+                                    .clipShape(Capsule())
+                                    .padding(10)
                             }
-                            .buttonStyle(.plain)
-                            .padding(10)
                         }
                     } else {
                         // Empty / Placeholder Card Mockup
@@ -1529,6 +1543,25 @@ struct WalletCardView: View {
                 }
 
                 Spacer()
+
+                if let onFetchFace = onFetchFace {
+                    if isFetchingFace {
+                        ProgressView()
+                            .frame(width: 28, height: 28)
+                    } else {
+                        Button {
+                            onFetchFace()
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 15))
+                                .foregroundStyle(.blue)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(verbatim: L10n.tr("Fetch Current Face")))
+                    }
+                }
 
                 Button {
                     renameText = card.displayName ?? ""
@@ -1854,7 +1887,11 @@ struct WalletCardsTab: View {
                     },
                     onRename: { newName in
                         vm.updateCardName(id: card.id, newName: newName)
-                    }
+                    },
+                    onFetchFace: {
+                        vm.fetchCurrentCardFace(for: card.id)
+                    },
+                    isFetchingFace: vm.fetchingFaceIds.contains(card.id)
                 )
                 .id(card.id)
                 .transition(.asymmetric(
