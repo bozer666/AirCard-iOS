@@ -45,6 +45,10 @@ final class AppViewModel: ObservableObject {
     @Published var cardFlashLog: [String] = []
     /// Card ids whose current on-device face is being fetched right now.
     @Published var fetchingFaceIds: Set<String> = []
+    /// Card ids that have a permanent original-face backup on disk.
+    @Published var originalBackupIds: Set<String> = []
+    /// Card ids whose original face is being restored right now.
+    @Published var restoringFaceIds: Set<String> = []
 
     enum FlashPhase: Equatable {
         case idle, running, done(ok: Bool)
@@ -454,6 +458,8 @@ final class AppViewModel: ObservableObject {
                 } else {
                     vm.scanStatusText = L10n.tr("Scanning stopped. Total cards: %lld.", vm.cards.count)
                     vm.log.append(L10n.tr("Scanning stopped. Total cards: %lld.", vm.cards.count))
+                    // Scanning finished — sync the current face for cards that lack one.
+                    vm.enqueueFaceFetchesForMissing()
                 }
             }
         }
@@ -472,6 +478,8 @@ final class AppViewModel: ObservableObject {
             scanStatusText = L10n.tr("Scanning stopped. Total cards: %lld.", cards.count)
         }
         saveCards()
+        // Scanning finished — sync the current face for cards that lack one.
+        enqueueFaceFetchesForMissing()
     }
 
     func processSyslogLine(_ line: String) {
@@ -625,6 +633,11 @@ final class AppViewModel: ObservableObject {
                 currentImage: currentImg
             )
         }
+        originalBackupIds = Set(cards.map(\.id).filter { id in
+            let dir = Self.cardOriginalsDir(for: id)
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            return !contents.isEmpty
+        })
     }
 
     func clearAllCards() {
@@ -752,6 +765,9 @@ final class AppViewModel: ObservableObject {
         let selected = cards.filter { $0.isSelected && ($0.customImage != nil || $0.customImageData != nil) }
         guard !selected.isEmpty else { return }
 
+        // Cards with no original backup get one before we modify them.
+        let backupNeededIds = Set(selected.map(\.id).filter { !originalBackupIds.contains($0) })
+
         syncTargetHostsToRust()
 
         cardFlashPhase    = .running
@@ -776,6 +792,34 @@ final class AppViewModel: ObservableObject {
                 await MainActor.run {
                     self.cardFlashLog.append(L10n.tr("[%lld/%lld] Flashing card %@…", i + 1, selected.count, String(cleanId.prefix(12))))
                     self.cardFlashProgress = Double(i) / total
+                }
+
+                // Back up the card's original face before modifying it (first time only).
+                if backupNeededIds.contains(card.id) {
+                    await MainActor.run {
+                        self.cardFlashLog.append(L10n.tr("Backing up original face for card %@…", String(cleanId.prefix(12))))
+                    }
+                    let pkpassRemoteDir = "/var/mobile/Library/Passes/Cards/\(cleanId).pkpass"
+                    let backupDir = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("airlift_backup_\(UUID().uuidString)", isDirectory: true)
+                    let backupResult = Self.readDeviceFilesAndRestore(
+                        pairingPath: pairingPath,
+                        remoteDir: pkpassRemoteDir,
+                        leaves: Self.cardFaceLeaves,
+                        localDir: backupDir
+                    )
+                    let stored = !backupResult.recovered.isEmpty && Self.storeOriginalBackupFiles(for: card.id, fromDir: backupDir)
+                    try? FileManager.default.removeItem(at: backupDir)
+                    if stored {
+                        await MainActor.run {
+                            self.originalBackupIds.insert(card.id)
+                            self.cardFlashLog.append(L10n.tr("✅ Original face backed up for card %@", String(cleanId.prefix(12))))
+                        }
+                    } else {
+                        await MainActor.run {
+                            self.cardFlashLog.append(L10n.tr("⚠️ Could not back up original face for card %@ (continuing)", String(cleanId.prefix(12))))
+                        }
+                    }
                 }
 
                 // Load source image at full resolution on demand to save memory
@@ -926,14 +970,67 @@ final class AppViewModel: ObservableObject {
         try? FileManager.default.removeItem(at: Self.cardCurrentImagePath(for: cardId))
     }
 
-    /// Fetch the card's CURRENT face from the paired device and display it.
-    /// Uses the pure-read AirTraffic channel (`al_exploit_read_files`):
-    /// nothing is staged or written on the device.
-    func fetchCurrentCardFace(for cardId: String) {
-        guard !fetchingFaceIds.contains(cardId) else { return }
+    // MARK: - Fetch Queue (serial: one AirTraffic session at a time)
+
+    private struct QueuedFaceFetch {
+        let id: String
+        let userInitiated: Bool
+    }
+
+    private var faceFetchQueue: [QueuedFaceFetch] = []
+    private var faceFetchRunning = false
+
+    /// Public entry for the fetch button.
+    func requestFaceFetch(for cardId: String) {
+        enqueueFaceFetch(cardId, userInitiated: true)
+    }
+
+    /// After scanning finishes, fetch faces for cards that don't have one yet.
+    func enqueueFaceFetchesForMissing() {
+        guard hasPairingFile else { return }
+        for card in cards where card.currentFaceImage == nil {
+            enqueueFaceFetch(card.id, userInitiated: false)
+        }
+    }
+
+    private func enqueueFaceFetch(_ cardId: String, userInitiated: Bool) {
+        if faceFetchQueue.contains(where: { $0.id == cardId }) || fetchingFaceIds.contains(cardId) {
+            return
+        }
+        if !userInitiated && !hasPairingFile { return }
+        faceFetchQueue.append(QueuedFaceFetch(id: cardId, userInitiated: userInitiated))
+        processFaceFetchQueue()
+    }
+
+    private func processFaceFetchQueue() {
+        guard !faceFetchRunning else { return }
+        while let next = faceFetchQueue.first {
+            faceFetchQueue.removeFirst()
+            if fetchingFaceIds.contains(next.id) { continue }
+            faceFetchRunning = true
+            fetchCurrentCardFace(for: next.id, userInitiated: next.userInitiated) { [weak self] in
+                guard let self = self else { return }
+                self.faceFetchRunning = false
+                self.processFaceFetchQueue()
+            }
+            return
+        }
+    }
+
+    /// Worker: fetch the card's CURRENT face from the paired device and display it.
+    /// Reads via the AirTraffic channel and immediately writes the recovered
+    /// files back to their original paths, so the on-device .pkpass is left
+    /// untouched (net-zero side effects). The recovered originals are kept
+    /// locally as the card's backup (first fetch wins — never overwritten).
+    private func fetchCurrentCardFace(for cardId: String, userInitiated: Bool = false, completion: (() -> Void)? = nil) {
+        func done() { completion?() }
+        guard !fetchingFaceIds.contains(cardId) else { done(); return }
         let cleanId = CardItem.cleanCardId(cardId) ?? cardId
         guard hasPairingFile else {
-            errorMessage = L10n.tr("Pairing file is required before scanning. Pair this iPhone or select a .plist first.")
+            if userInitiated {
+                errorMessage = L10n.tr("Pairing file is required before scanning. Pair this iPhone or select a .plist first.")
+            }
+            done()
             return
         }
         syncTargetHostsToRust()
@@ -946,84 +1043,263 @@ final class AppViewModel: ObservableObject {
 
         let pairingPath = PairingController.pairingFilePath()
         let remoteDir = "/var/mobile/Library/Passes/Cards/\(cleanId).pkpass"
-        let leavesJoined = Self.cardFaceLeaves.joined(separator: "\n")
         let localDirURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("airlift_face_\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: localDirURL, withIntermediateDirectories: true)
 
         Task.detached { [weak self] in
-            var outJson: UnsafeMutablePointer<CChar>? = nil
-            var outError: UnsafeMutablePointer<CChar>? = nil
-            let rc = pairingPath.withCString { pairC in
-                remoteDir.withCString { dirC in
-                    leavesJoined.withCString { leavesC in
-                        localDirURL.path.withCString { localC in
-                            al_exploit_read_files(pairC, dirC, leavesC, localC, { _, msg in
-                                guard let msg = msg else { return }
-                                let line = String(cString: msg)
-                                DispatchQueue.main.async { AppViewModel.shared?.cardFlashLog.append("    " + line) }
-                            }, nil, &outJson, &outError)
-                        }
-                    }
-                }
-            }
-            let jsonStr = outJson.flatMap { String(validatingUTF8: $0) }
-            if let p = outJson { al_string_free(p) }
-            let errStr = outError.flatMap { String(validatingUTF8: $0) }
-            if let p = outError { al_string_free(p) }
+            let result = AppViewModel.readDeviceFilesAndRestore(
+                pairingPath: pairingPath,
+                remoteDir: remoteDir,
+                leaves: AppViewModel.cardFaceLeaves,
+                localDir: localDirURL
+            )
 
             // Pick the best recovered face file (priority order).
             var facePNG: Data? = nil
             var passName: String? = nil
-            if rc == 0, let jsonStr = jsonStr,
-               let jsonData = jsonStr.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-               let recovered = obj["recovered"] as? [String] {
-                let recoveredSet = Set(recovered)
-                for leaf in AppViewModel.cardFaceLeaves where recoveredSet.contains(leaf) {
-                    let fileURL = localDirURL.appendingPathComponent(leaf)
-                    guard let data = try? Data(contentsOf: fileURL) else { continue }
-                    if leaf == "pass.json" {
-                        if let pass = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            passName = (pass["organizationName"] as? String) ?? (pass["description"] as? String)
-                        }
-                        continue
-                    }
-                    if facePNG == nil {
-                        if leaf.hasSuffix(".pdf") {
-                            facePNG = AppViewModel.renderPDFFace(data: data)?.pngData()
-                        } else {
-                            facePNG = data
-                        }
-                    }
+            if !result.recovered.isEmpty {
+                facePNG = AppViewModel.facePNGData(inDir: localDirURL)
+                if result.recovered.contains("pass.json"),
+                   let data = try? Data(contentsOf: localDirURL.appendingPathComponent("pass.json")),
+                   let pass = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    passName = (pass["organizationName"] as? String) ?? (pass["description"] as? String)
                 }
             }
+            // First successful fetch becomes this card's permanent original backup.
+            let storedBackup = AppViewModel.storeOriginalBackupFiles(for: cardId, fromDir: localDirURL)
             try? FileManager.default.removeItem(at: localDirURL)
 
             await MainActor.run { [weak self] in
-                guard let self = self else { return }
+                guard let self = self else { done(); return }
                 self.fetchingFaceIds.remove(cardId)
-                guard let idx = self.cards.firstIndex(where: { $0.id == cardId }) else { return }
-                if let png = facePNG, let img = UIImage(data: png) {
+                if let writeBackErr = result.writeBackError {
+                    self.cardFlashLog.append(L10n.tr("⚠️ Write-back to device failed; originals are backed up in the app: %@", writeBackErr))
+                }
+                if let png = facePNG, let img = UIImage(data: png),
+                   let idx = self.cards.firstIndex(where: { $0.id == cardId }) {
                     self.cards[idx].currentImageData = png
                     self.cards[idx].currentImage = ImageEngine.safeImageFromData(png, maxDimension: 768) ?? img
                     try? png.write(to: AppViewModel.cardCurrentImagePath(for: cardId))
                     self.cardFlashLog.append(L10n.tr("✅ Current face fetched for card %@", String(cleanId.prefix(12))))
-                } else if rc != 0 {
-                    self.cardFlashLog.append(L10n.tr("❌ Face fetch failed: %@", errStr ?? "exploit error"))
-                    self.errorMessage = L10n.tr("Card face fetch error: %@", errStr ?? "exploit error")
+                    if storedBackup {
+                        self.originalBackupIds.insert(cardId)
+                        self.cardFlashLog.append(L10n.tr("✅ Original face backed up for card %@", String(cleanId.prefix(12))))
+                    }
+                    if let passName = passName, !passName.isEmpty,
+                       (self.cards[idx].displayName ?? "").isEmpty {
+                        self.cards[idx].displayName = passName
+                        self.saveCards()
+                    }
+                } else if let err = result.error {
+                    self.cardFlashLog.append(L10n.tr("❌ Face fetch failed: %@", err))
+                    if userInitiated {
+                        self.errorMessage = L10n.tr("Card face fetch error: %@", err)
+                    }
                 } else {
                     self.cardFlashLog.append(L10n.tr("⚠️ No face image found on device for card %@", String(cleanId.prefix(12))))
                 }
-                if let passName = passName, !passName.isEmpty,
-                   (self.cards[idx].displayName ?? "").isEmpty {
-                    self.cards[idx].displayName = passName
-                    self.saveCards()
+                done()
+            }
+        }
+    }
+
+    /// Read the requested leaves out of `remoteDir` and immediately write
+    /// every recovered file back to its original path (byte-identical), so
+    /// the read leaves no trace on the device. Returns the recovered leaf
+    /// names, a hard read error, and (if reads worked) a write-back error.
+    nonisolated static func readDeviceFilesAndRestore(
+        pairingPath: String,
+        remoteDir: String,
+        leaves: [String],
+        localDir: URL
+    ) -> (recovered: [String], error: String?, writeBackError: String?) {
+        try? FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        let leavesJoined = leaves.joined(separator: "\n")
+
+        var outJson: UnsafeMutablePointer<CChar>? = nil
+        var outError: UnsafeMutablePointer<CChar>? = nil
+        let rc = pairingPath.withCString { pairC in
+            remoteDir.withCString { dirC in
+                leavesJoined.withCString { leavesC in
+                    localDir.path.withCString { localC in
+                        al_exploit_read_files(pairC, dirC, leavesC, localC, { _, msg in
+                            guard let msg = msg else { return }
+                            let line = String(cString: msg)
+                            DispatchQueue.main.async { AppViewModel.shared?.cardFlashLog.append("    " + line) }
+                        }, nil, &outJson, &outError)
+                    }
+                }
+            }
+        }
+        let jsonStr = outJson.flatMap { String(validatingUTF8: $0) }
+        if let p = outJson { al_string_free(p) }
+        let errStr = outError.flatMap { String(validatingUTF8: $0) }
+        if let p = outError { al_string_free(p) }
+
+        var recovered: [String] = []
+        if rc == 0, let jsonStr = jsonStr,
+           let jsonData = jsonStr.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+           let list = obj["recovered"] as? [String] {
+            recovered = list
+        } else {
+            return (recovered, errStr ?? "exploit error", nil)
+        }
+
+        // Write everything back, byte-identical, to leave the device untouched.
+        var writeBackError: String? = nil
+        if !recovered.isEmpty {
+            var wbError: UnsafeMutablePointer<CChar>? = nil
+            let wbRc = pairingPath.withCString { pairC in
+                localDir.path.withCString { srcC in
+                    remoteDir.withCString { tgtC in
+                        al_exploit_write_dir(pairC, srcC, tgtC, { _, msg in
+                            guard let msg = msg else { return }
+                            let line = String(cString: msg)
+                            DispatchQueue.main.async { AppViewModel.shared?.cardFlashLog.append("    " + line) }
+                        }, nil, &wbError)
+                    }
+                }
+            }
+            let wbErrStr = wbError.flatMap { String(validatingUTF8: $0) }
+            if let p = wbError { al_string_free(p) }
+            if wbRc != 0 {
+                writeBackError = wbErrStr ?? "write-back failed"
+            }
+        }
+        return (recovered, nil, writeBackError)
+    }
+
+    // MARK: - Original Face Backup & Restore
+
+    /// Permanent backup location for a card's original (pre-modification) files.
+    nonisolated static func cardOriginalsDir(for cardId: String) -> URL {
+        let safeId = cardId.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+        let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docDir.appendingPathComponent("WalletCards/originals/\(safeId)", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
+    /// Copy the recovered originals into the card's permanent backup.
+    /// First backup wins — never overwrites an existing one.
+    /// - Returns: true if a new backup was stored.
+    nonisolated static func storeOriginalBackupFiles(for cardId: String, fromDir: URL) -> Bool {
+        let dst = cardOriginalsDir(for: cardId)
+        let existing = (try? FileManager.default.contentsOfDirectory(atPath: dst.path)) ?? []
+        if !existing.isEmpty { return false }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: fromDir.path)) ?? []
+        var stored = false
+        for f in files {
+            let src = fromDir.appendingPathComponent(f)
+            let target = dst.appendingPathComponent(f)
+            if (try? FileManager.default.copyItem(at: src, to: target)) != nil {
+                stored = true
+            }
+        }
+        return stored
+    }
+
+    /// Best face PNG available in a directory of recovered pass files.
+    nonisolated static func facePNGData(inDir dir: URL) -> Data? {
+        for leaf in cardFaceLeaves where leaf != "pass.json" {
+            let f = dir.appendingPathComponent(leaf)
+            guard let data = try? Data(contentsOf: f) else { continue }
+            if leaf.hasSuffix(".pdf") {
+                if let png = renderPDFFace(data: data)?.pngData() { return png }
+            } else {
+                return data
+            }
+        }
+        return nil
+    }
+
+    /// Restore a card's backed-up original face onto the device.
+    func restoreOriginalCardFace(for cardId: String) {
+        guard originalBackupIds.contains(cardId) else {
+            errorMessage = L10n.tr("No original backup for this card")
+            return
+        }
+        guard !restoringFaceIds.contains(cardId) else { return }
+        let cleanId = CardItem.cleanCardId(cardId) ?? cardId
+        guard hasPairingFile else {
+            errorMessage = L10n.tr("Pairing file is required before scanning. Pair this iPhone or select a .plist first.")
+            return
+        }
+        syncTargetHostsToRust()
+        restoringFaceIds.insert(cardId)
+        cardFlashLog.append(L10n.tr("Restoring original face for card %@…", String(cleanId.prefix(12))))
+
+        let pairingPath = PairingController.pairingFilePath()
+        let originalsDir = Self.cardOriginalsDir(for: cardId)
+        let pkpassTarget = "/var/mobile/Library/Passes/Cards/\(cleanId).pkpass"
+
+        Task.detached { [weak self] in
+            var outError: UnsafeMutablePointer<CChar>? = nil
+            let rc = pairingPath.withCString { pairC in
+                originalsDir.path.withCString { srcC in
+                    pkpassTarget.withCString { tgtC in
+                        al_exploit_write_dir(pairC, srcC, tgtC, { _, msg in
+                            guard let msg = msg else { return }
+                            let line = String(cString: msg)
+                            DispatchQueue.main.async { AppViewModel.shared?.cardFlashLog.append("    " + line) }
+                        }, nil, &outError)
+                    }
+                }
+            }
+            let errStr = outError.flatMap { String(validatingUTF8: $0) }
+            if let p = outError { al_string_free(p) }
+
+            if rc == 0 {
+                AppViewModel.invalidatePassCache(pairingPath: pairingPath, cleanId: cleanId)
+            }
+
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                self.restoringFaceIds.remove(cardId)
+                if rc == 0, let idx = self.cards.firstIndex(where: { $0.id == cardId }) {
+                    // The device shows the original again — drop the custom skin
+                    // preview and show the backed-up face instead.
+                    self.clearCardImage(for: cardId)
+                    if let png = AppViewModel.facePNGData(inDir: originalsDir), let img = UIImage(data: png) {
+                        self.cards[idx].currentImageData = png
+                        self.cards[idx].currentImage = ImageEngine.safeImageFromData(png, maxDimension: 768) ?? img
+                        try? png.write(to: AppViewModel.cardCurrentImagePath(for: cardId))
+                    }
+                    self.cardFlashLog.append(L10n.tr("✅ Original face restored for card %@", String(cleanId.prefix(12))))
+                    self.cardFlashLog.append(L10n.tr("Force-close the Wallet app to see changes."))
+                } else if rc != 0 {
+                    self.cardFlashLog.append(L10n.tr("❌ Restore failed: %@", errStr ?? "exploit error"))
+                    self.errorMessage = L10n.tr("Card face fetch error: %@", errStr ?? "exploit error")
                 }
             }
         }
     }
 
+    /// Invalidate the pass's rendered-face caches (mirror of the flash flow).
+    nonisolated static func invalidatePassCache(pairingPath: String, cleanId: String) {
+        let stageInvDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("airlift_inv_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: stageInvDir, withIntermediateDirectories: true)
+        for leaf in ["FrontFace", "Preview", "PlaceHolder"] {
+            try? Data("corrupted".utf8).write(to: stageInvDir.appendingPathComponent(leaf))
+        }
+        for ext in [".cache", ".pkcache"] {
+            let cacheTarget = "/var/mobile/Library/Passes/Cards/\(cleanId)\(ext)"
+            var outError: UnsafeMutablePointer<CChar>? = nil
+            _ = pairingPath.withCString { pairC in
+                stageInvDir.path.withCString { srcC in
+                    cacheTarget.withCString { tgtC in
+                        al_exploit_write_dir(pairC, srcC, tgtC, nil, nil, &outError)
+                    }
+                }
+            }
+            if let p = outError { al_string_free(p) }
+        }
+        try? FileManager.default.removeItem(at: stageInvDir)
+    }
     /// Render the first page of a pass PDF (transit cards) into an image.
     nonisolated static func renderPDFFace(data: Data) -> UIImage? {
         guard let doc = PDFDocument(data: data), let page = doc.page(at: 0) else { return nil }

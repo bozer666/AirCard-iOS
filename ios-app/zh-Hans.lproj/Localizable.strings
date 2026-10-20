@@ -314,3 +314,13 @@
 "❌ Face fetch failed: %@" = "❌ 获取卡面失败：%@";
 "Card face fetch error: %@" = "卡面获取失败：%@";
 "⚠️ No face image found on device for card %@" = "⚠️ 设备上未找到卡片 %@ 的卡面图片";
+"Backing up original face for card %@…" = "正在备份卡片 %@ 的原始卡面…";
+"✅ Original face backed up for card %@" = "✅ 卡片 %@ 的原始卡面已备份";
+"⚠️ Could not back up original face for card %@ (continuing)" = "⚠️ 卡片 %@ 的原始卡面备份失败（继续刷写）";
+"Restoring original face for card %@…" = "正在还原卡片 %@ 的原始卡面…";
+"✅ Original face restored for card %@" = "✅ 卡片 %@ 的原始卡面已还原";
+"❌ Restore failed: %@" = "❌ 还原失败：%@";
+"Restore Default" = "恢复默认";
+"No original backup for this card" = "这张卡没有原始卡面备份";
+"⚠️ Write-back to device failed; originals are backed up in the app: %@" = "⚠️ 回写设备失败（原始文件已在 App 内备份）：%@";
+"Force-close the Wallet app to see changes." = "请强退钱包 App 后查看效果。";

@@ -1,0 +1,64 @@
+name: Build card-face preview IPA
+
+# Dedicated workflow for the feature/card-face-preview branch.
+# Artifact name carries a Beijing-time date suffix (yyMMddHHmm).
+on:
+  push:
+    branches: [feature/card-face-preview]
+    paths:
+      - 'ios-app/**'
+      - 'rust-core/**'
+      - 'build-ios.sh'
+      - 'project.yml'
+      - 'AirCard-iOS.xcodeproj/**'
+      - '.github/workflows/build-card-face-preview.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Liquid Glass is applied based on the build SDK: must compile with the
+    # iOS 26 SDK (Xcode 26+) or system UI renders in the legacy style.
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_APP" ]; then echo "No Xcode 26+ found on runner"; exit 1; fi
+          echo "Using $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          SDK_VER=$(xcrun --sdk iphoneos --show-sdk-version)
+          echo "iOS SDK: $SDK_VER"
+          case "$SDK_VER" in 26.*|27.*) ;; *) echo "Unexpected SDK version: $SDK_VER"; exit 1;; esac
+
+      - name: Compute artifact name
+        run: echo "ARTIFACT_NAME=aircard-unsigned-ipa-$(TZ=Asia/Shanghai date +%y%m%d%H%M)" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build Rust core (AirliftFFI.xcframework)
+        run: ./build-ios.sh
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Regenerate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned IPA
+        run: ./build-ipa.sh Release
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: build/AirCard-iOS.ipa
+          if-no-files-found: error

@@ -2,7 +2,7 @@ name: Build unsigned IPA
 
 on:
   push:
-    branches: [main, feature/card-face-preview]
+    branches: [main]
     paths:
       - 'ios-app/**'
       - 'rust-core/**'

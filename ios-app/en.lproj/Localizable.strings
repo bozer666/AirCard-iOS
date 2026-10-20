@@ -314,3 +314,13 @@
 "❌ Face fetch failed: %@" = "❌ Face fetch failed: %@";
 "Card face fetch error: %@" = "Card face fetch error: %@";
 "⚠️ No face image found on device for card %@" = "⚠️ No face image found on device for card %@";
+"Backing up original face for card %@…" = "Backing up original face for card %@…";
+"✅ Original face backed up for card %@" = "✅ Original face backed up for card %@";
+"⚠️ Could not back up original face for card %@ (continuing)" = "⚠️ Could not back up original face for card %@ (continuing)";
+"Restoring original face for card %@…" = "Restoring original face for card %@…";
+"✅ Original face restored for card %@" = "✅ Original face restored for card %@";
+"❌ Restore failed: %@" = "❌ Restore failed: %@";
+"Restore Default" = "Restore Default";
+"No original backup for this card" = "No original backup for this card";
+"⚠️ Write-back to device failed; originals are backed up in the app: %@" = "⚠️ Write-back to device failed; originals are backed up in the app: %@";
+"Force-close the Wallet app to see changes." = "Force-close the Wallet app to see changes.";

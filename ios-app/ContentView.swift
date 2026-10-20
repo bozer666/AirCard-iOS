@@ -1385,6 +1385,9 @@ struct WalletCardView: View {
     var onRename: ((String) -> Void)? = nil
     var onFetchFace: (() -> Void)? = nil
     var isFetchingFace: Bool = false
+    var hasOriginalBackup: Bool = false
+    var isRestoringFace: Bool = false
+    var onRestoreDefault: (() -> Void)? = nil
 
     @State private var copied = false
     @State private var isRenaming = false
@@ -1591,6 +1594,35 @@ struct WalletCardView: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 4)
+
+            // Restore-default row (only when an original backup exists)
+            if hasOriginalBackup, let onRestoreDefault = onRestoreDefault {
+                HStack {
+                    Spacer()
+                    if isRestoringFace {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(verbatim: L10n.tr("Restoring original face for card %@…", String(card.id.prefix(12))))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button {
+                            onRestoreDefault()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.uturn.backward.circle")
+                                    .font(.system(size: 12))
+                                Text(verbatim: L10n.tr("Restore Default"))
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundStyle(.blue)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
         }
         .padding(14)
         .background(
@@ -1889,9 +1921,14 @@ struct WalletCardsTab: View {
                         vm.updateCardName(id: card.id, newName: newName)
                     },
                     onFetchFace: {
-                        vm.fetchCurrentCardFace(for: card.id)
+                        vm.requestFaceFetch(for: card.id)
                     },
-                    isFetchingFace: vm.fetchingFaceIds.contains(card.id)
+                    isFetchingFace: vm.fetchingFaceIds.contains(card.id),
+                    hasOriginalBackup: vm.originalBackupIds.contains(card.id),
+                    isRestoringFace: vm.restoringFaceIds.contains(card.id),
+                    onRestoreDefault: {
+                        vm.restoreOriginalCardFace(for: card.id)
+                    }
                 )
                 .id(card.id)
                 .transition(.asymmetric(
