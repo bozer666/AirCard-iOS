@@ -1975,15 +1975,15 @@ struct WalletCardsTab: View {
                 ))
             }
 
-            // Always mounted on this page: clearing the log empties the
-            // lines but must not make the whole log area disappear.
-            CompactLogView(
-                title: "Flash Log (\(vm.cardFlashLog.count) lines)",
-                lines: vm.cardFlashLog,
-                onClear: { vm.cardFlashLog.removeAll() },
-                saveFileBaseName: "aircard-flash-log"
-            )
-            .padding(.top, 8)
+            if !vm.cardFlashLog.isEmpty {
+                CompactLogView(
+                    title: "Flash Log (\(vm.cardFlashLog.count) lines)",
+                    lines: vm.cardFlashLog,
+                    onClear: { vm.cardFlashLog.removeAll() },
+                    saveFileBaseName: "aircard-flash-log"
+                )
+                .padding(.top, 8)
+            }
         }
         .padding(.horizontal)
     }
