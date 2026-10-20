@@ -37,7 +37,10 @@ jobs:
           case "$SDK_VER" in 26.*|27.*) ;; *) echo "Unexpected SDK version: $SDK_VER"; exit 1;; esac
 
       - name: Compute artifact name
-        run: echo "ARTIFACT_NAME=aircard-unsigned-ipa-$(TZ=Asia/Shanghai date +%y%m%d%H%M)" >> "$GITHUB_ENV"
+        run: |
+          SUFFIX=$(TZ=Asia/Shanghai date +%y%m%d%H%M)
+          echo "ARTIFACT_NAME=aircard-unsigned-ipa-$SUFFIX" >> "$GITHUB_ENV"
+          echo "IPA_NAME=AirCard-iOS-$SUFFIX.ipa" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         run: |
@@ -56,9 +59,12 @@ jobs:
       - name: Build unsigned IPA
         run: ./build-ipa.sh Release
 
+      - name: Rename IPA with date suffix
+        run: mv build/AirCard-iOS.ipa "build/$IPA_NAME"
+
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: build/AirCard-iOS.ipa
+          path: build/${{ env.IPA_NAME }}
           if-no-files-found: error
