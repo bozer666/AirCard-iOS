@@ -458,8 +458,6 @@ final class AppViewModel: ObservableObject {
                 } else {
                     vm.scanStatusText = L10n.tr("Scanning stopped. Total cards: %lld.", vm.cards.count)
                     vm.log.append(L10n.tr("Scanning stopped. Total cards: %lld.", vm.cards.count))
-                    // Scanning finished — sync the current face for cards that lack one.
-                    vm.enqueueFaceFetchesForMissing()
                 }
             }
         }
@@ -478,8 +476,6 @@ final class AppViewModel: ObservableObject {
             scanStatusText = L10n.tr("Scanning stopped. Total cards: %lld.", cards.count)
         }
         saveCards()
-        // Scanning finished — sync the current face for cards that lack one.
-        enqueueFaceFetchesForMissing()
     }
 
     func processSyslogLine(_ line: String) {
@@ -983,14 +979,6 @@ final class AppViewModel: ObservableObject {
     /// Public entry for the fetch button.
     func requestFaceFetch(for cardId: String) {
         enqueueFaceFetch(cardId, userInitiated: true)
-    }
-
-    /// After scanning finishes, fetch faces for cards that don't have one yet.
-    func enqueueFaceFetchesForMissing() {
-        guard hasPairingFile else { return }
-        for card in cards where card.currentFaceImage == nil {
-            enqueueFaceFetch(card.id, userInitiated: false)
-        }
     }
 
     private func enqueueFaceFetch(_ cardId: String, userInitiated: Bool) {
