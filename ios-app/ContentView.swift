@@ -705,7 +705,11 @@ struct CompactLogView: View {
     let title: LocalizedStringKey
     let lines: [String]
     var onClear: (() -> Void)? = nil
+    /// When set, a Save button exports the log to a timestamped .txt file.
+    var saveFileBaseName: String? = nil
     @State private var copied: Bool = false
+    @State private var shareURL: URL? = nil
+    @State private var showShareSheet: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -719,6 +723,35 @@ struct CompactLogView: View {
                         Image(systemName: "trash")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.trailing, 6)
+                }
+                if let saveFileBaseName = saveFileBaseName, !lines.isEmpty {
+                    Button {
+                        let fmt = DateFormatter()
+                        fmt.dateFormat = "yyMMddHHmm"
+                        let name = "\(saveFileBaseName)-\(fmt.string(from: Date())).txt"
+                        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                        do {
+                            try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+                            shareURL = url
+                            showShareSheet = true
+                        } catch {
+                            // Writing the log file failed; nothing to share.
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(verbatim: L10n.tr("Save"))
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color(uiColor: .tertiarySystemFill))
+                        .clipShape(Capsule())
                     }
                     .buttonStyle(.borderless)
                     .padding(.trailing, 6)
@@ -784,6 +817,11 @@ struct CompactLogView: View {
             }
         }
         .padding(.vertical, 4)
+        .sheet(isPresented: $showShareSheet) {
+            if let shareURL = shareURL {
+                ShareSheet(items: [shareURL])
+            }
+        }
     }
 }
 
@@ -1941,7 +1979,8 @@ struct WalletCardsTab: View {
                 CompactLogView(
                     title: "Flash Log (\(vm.cardFlashLog.count) lines)",
                     lines: vm.cardFlashLog,
-                    onClear: { vm.cardFlashLog.removeAll() }
+                    onClear: { vm.cardFlashLog.removeAll() },
+                    saveFileBaseName: "aircard-flash-log"
                 )
                 .padding(.top, 8)
             }
