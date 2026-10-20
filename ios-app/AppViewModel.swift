@@ -1137,18 +1137,22 @@ final class AppViewModel: ObservableObject {
         if let p = outError { al_string_free(p) }
 
         var recovered: [String] = []
+        var needsRestore = true
         if rc == 0, let jsonStr = jsonStr,
            let jsonData = jsonStr.data(using: .utf8),
            let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
            let list = obj["recovered"] as? [String] {
             recovered = list
+            // The link strategy reads with copy semantics — nothing to write back.
+            needsRestore = (obj["needsRestore"] as? Bool) ?? true
         } else {
             return (recovered, errStr ?? "exploit error", nil)
         }
 
-        // Write everything back, byte-identical, to leave the device untouched.
+        // The export strategy transfers (moves) the files; write everything
+        // back, byte-identical, to leave the device untouched.
         var writeBackError: String? = nil
-        if !recovered.isEmpty {
+        if needsRestore && !recovered.isEmpty {
             var wbError: UnsafeMutablePointer<CChar>? = nil
             let wbRc = pairingPath.withCString { pairC in
                 localDir.path.withCString { srcC in
